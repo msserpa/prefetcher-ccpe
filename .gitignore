@@ -1,0 +1,8 @@
+# keep for empty dirs
+!.keep
+
+# Mac OS files
+*DS*Store*
+
+#NFS files
+*.nfs*
