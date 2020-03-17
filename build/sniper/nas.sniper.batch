@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+#SBATCH --time=24:00:00
+#SBATCH --partition=cei
+#SBATCH --nodelist=cei3
+#SBATCH --exclusive
+#SBATCH --job-name=ccpe-sniper-nas
+
+source env.sh
+
+NAS_BIN=$HOME/NPB/NPB3.3.1/NPB3.3-OMP/bin
+BIN=/tmp
+
+cp $NAS_BIN/* $BIN
+
+HOST=`hostname | awk -F. {'print $1'}`
+ARCH=`gcc -march=native -Q --help=target | grep march | awk '{print $2}'`
+WPWD=`pwd`
+
+date +"%d/%m/%Y %H:%M:%S"
+printf "\t Running on $ARCH@$HOST \n\n"
+
+while true; do
+	STEP=`ls output/ | grep $HOST | tail -1 | awk -F. {'print $2'}`
+	if [ -z "$STEP" ]; then
+		STEP=0
+	fi
+
+	DOE=$WPWD/DoE/$HOST.nas.csv
+	if [ -f "$DOE" ]; then
+	    printf "\t Using old $DOE\n\n"
+	else 
+	    $WPWD/DoE.sh nas
+	    STEP=$((STEP+1))
+	fi
+
+	OUTPUT=$WPWD/output/$HOST.$STEP.nas.csv
+
+	unset -v KMP_AFFINITY
+	unset -v GOMP_CPU_AFFINITY
+	unset -v OMP_NUM_THREADS
+	unset -v OMP_SCHEDULE
+	unset -v PAPI_EVENT
+	unset -v LD_PRELOAD
+
+	date +"%d/%m/%Y %H:%M:%S"
+	printf "\t Warm-up\n\n"
+	stress-ng --cpu 100 -t 5 &> /tmp/time.stress
+	sleep 1
+	sed 's/^/\t/' /tmp/time.stress
+	printf "\n"
+
+	date +"%d/%m/%Y %H:%M:%S"
+	printf "\t Step: $STEP \n\n"
+
+	while IFS=\; read -r VERSION APP THREADS; do	
+		date +"%d/%m/%Y %H:%M:%S"
+		printf "\t Version: $VERSION \n"
+		printf "\t Application: $APP \n"
+		printf "\t Threads: $THREADS \n"
+
+		export OMP_NUM_THREADS=$THREADS
+		EXEC=$BIN/$APP.A.x
+
+		printf "\t Start: `date +"%d/%m/%Y %H:%M:%S"` \n"
+		cd /tmp
+		if [ "$VERSION" == "sniper-L1-L2" ]; then
+			$WPWD/sniper/run-sniper -n $THREADS -c skylake -c prefetchersky2.cfg $EXEC 1> /tmp/exec.$VERSION.$APP.$THREADS 2> /tmp/sniper.$VERSION.$APP.$THREADS
+		elif [ "$VERSION" == "sniper-L2" ]; then
+			$WPWD/sniper/run-sniper -n $THREADS -c skylake -c prefetchersky1.cfg $EXEC 1> /tmp/exec.$VERSION.$APP.$THREADS 2> /tmp/sniper.$VERSION.$APP.$THREADS
+		else
+			$WPWD/sniper/run-sniper -n $THREADS -c skylake $EXEC 1> /tmp/exec.$VERSION.$APP.$THREADS 2> /tmp/sniper.$VERSION.$APP.$THREADS
+		fi
+		cd - &> /dev/null
+		printf "\t End:   `date +"%d/%m/%Y %H:%M:%S"` \n\n"
+
+		python $WPWD/sniper/tools/dumpstats.py -d /tmp/ > /tmp/outfile.$VERSION.$APP.$THREADS
+		$WPWD/extrai.sh /tmp/outfile.$VERSION.$APP.$THREADS $VERSION $APP >> $OUTPUT
+
+		sed -i '1d' $DOE
+		find $DOE -size 0 -delete
+	done < $DOE
+done
+
+date +"%d/%m/%Y %H:%M:%S"
+printf "\t done\n\n"

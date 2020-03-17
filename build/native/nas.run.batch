@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+#SBATCH --time=24:00:00
+#SBATCH --partition=cei
+#SBATCH --nodelist=cei5
+#SBATCH --exclusive
+#SBATCH --job-name=ccpe-girelli-nas
+
+NAS_BIN=$HOME/NPB/NPB3.3.1/NPB3.3-OMP/bin
+BIN=/tmp
+
+cp $NAS_BIN/* $BIN
+
+HOST=`hostname | awk -F. {'print $1'}`
+ARCH=`gcc -march=native -Q --help=target | grep march | awk '{print $2}'`
+
+date +"%d/%m/%Y %H:%M:%S"
+printf "\t Running on $ARCH@$HOST \n\n"
+
+while true; do
+	STEP=`ls output/ | grep $HOST | tail -1 | awk -F. {'print $2'}`
+	if [ -z "$STEP" ]; then
+		STEP=0
+	fi
+
+	DOE=./DoE/$HOST.nas.csv
+	if [ -f "$DOE" ]; then
+	    printf "\t Using old $DOE\n\n"
+	else 
+	    ./DoE.sh nas
+	    STEP=$((STEP+1))
+	fi
+
+	OUTPUT=./output/$HOST.$STEP.nas.csv
+
+	unset -v KMP_AFFINITY
+	unset -v GOMP_CPU_AFFINITY
+	unset -v OMP_NUM_THREADS
+	unset -v OMP_SCHEDULE
+	unset -v PAPI_EVENT
+	unset -v LD_PRELOAD
+
+	date +"%d/%m/%Y %H:%M:%S"
+	printf "\t Warm-up\n\n"
+	stress-ng --cpu 100 -t 5 &> /tmp/time.stress
+	sleep 1
+	sed 's/^/\t/' /tmp/time.stress
+	printf "\n"
+
+	date +"%d/%m/%Y %H:%M:%S"
+	printf "\t Step: $STEP \n\n"
+
+	while IFS=\; read -r APP THREADS METRIC; do	
+		date +"%d/%m/%Y %H:%M:%S"
+		printf "\t Application: $APP \n"
+		printf "\t Threads: $THREADS \n"
+		printf "\t Event: $METRIC \n"
+
+		export OMP_NUM_THREADS=$THREADS
+		export GOMP_CPU_AFFINITY="0-$((2*$THREADS)):2"
+		EXEC=$BIN/$APP.A.x
+
+		printf "\t Start: `date +"%d/%m/%Y %H:%M:%S"` \n"
+		numactl --membind=0 --cpunodebind=0 perf stat -a -A -e $METRIC  $EXEC 1> /tmp/exec 2> /tmp/perf
+		printf "\t End:   `date +"%d/%m/%Y %H:%M:%S"` \n\n"
+
+		METRIC_NAME=`echo $METRIC | sed 's/\./-/g' | sed 's/\_/-/g'`
+		for CPU in `seq 0 2 $((2*$THREADS - 1))`; do 
+			VALUE=`cat /tmp/perf | grep $METRIC | grep "CPU$CPU " | awk '{print $2}' | sed 's/\.//g'`
+			echo native-none,$APP,$(($CPU/2)),$THREADS,$METRIC_NAME,$VALUE >> $OUTPUT
+		done
+
+		sed -i '1d' $DOE
+		find $DOE -size 0 -delete
+	done < $DOE
+
+done
+
+date +"%d/%m/%Y %H:%M:%S"
+printf "\t done\n\n"

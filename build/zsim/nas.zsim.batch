@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+#SBATCH --time=24:00:00
+#SBATCH --partition=cei
+#SBATCH --nodelist=cei2
+#SBATCH --exclusive
+#SBATCH --job-name=ccpe-zsim-nas
+
+source env.sh
+
+NAS_BIN=$HOME/NPB/NPB3.3.1/NPB3.3-OMP/bin
+BIN=/tmp
+
+cp $NAS_BIN/* $BIN
+
+HOST=`hostname | awk -F. {'print $1'}`
+ARCH=`gcc -march=native -Q --help=target | grep march | awk '{print $2}'`
+WPWD=`pwd`
+ZSIM=$WPWD/zsim/build/opt/
+
+date +"%d/%m/%Y %H:%M:%S"
+printf "\t Running on $ARCH@$HOST \n\n"
+
+while true; do
+	STEP=`ls output/ | grep $HOST | tail -1 | awk -F. {'print $2'}`
+	if [ -z "$STEP" ]; then
+		STEP=0
+	fi
+
+	DOE=$WPWD/DoE/$HOST.nas.csv
+	if [ -f "$DOE" ]; then
+	    printf "\t Using old $DOE\n\n"
+	else 
+	    ./DoE.sh nas
+	    STEP=$((STEP+1))
+	fi
+
+	OUTPUT=$WPWD/output/$HOST.$STEP.nas.csv
+
+	unset -v KMP_AFFINITY
+	unset -v GOMP_CPU_AFFINITY
+	unset -v OMP_NUM_THREADS
+	unset -v OMP_SCHEDULE
+	unset -v PAPI_EVENT
+	unset -v LD_PRELOAD
+
+	date +"%d/%m/%Y %H:%M:%S"
+	printf "\t Warm-up\n\n"
+	stress-ng --cpu 100 -t 5 &> /tmp/time.stress
+	sleep 1
+	sed 's/^/\t/' /tmp/time.stress
+	printf "\n"
+
+	date +"%d/%m/%Y %H:%M:%S"
+	printf "\t Step: $STEP \n\n"
+
+	while IFS=\; read -r APP THREADS; do	
+		date +"%d/%m/%Y %H:%M:%S"
+		printf "\t Application: $APP \n"
+		printf "\t Threads: $THREADS \n"
+
+		export OMP_NUM_THREADS=$THREADS
+		EXEC=$BIN/$APP.A.x
+
+		sed -i "s@[[:lower:]][[:lower:]].[[:upper:]].x@$APP.A.x@g" $ZSIM/skylakezsim.cfg
+		sed -i 's/^.*cores =.*;.*$/cores = '"$THREADS"';/' $ZSIM/skylakezsim.cfg
+		sed -i 's/^.*caches =.*;.*$/caches = '"$THREADS"';/' $ZSIM/skylakezsim.cfg
+		sed -i '/l3 =/!b;n;ccaches = 1\;' $ZSIM/skylakezsim.cfg
+
+		printf "\t Start: `date +"%d/%m/%Y %H:%M:%S"` \n"
+		cd /tmp
+		$ZSIM/zsim $ZSIM/skylakezsim.cfg 1> /tmp/exec 2> /tmp/zsim
+		cd - &> /dev/null
+		printf "\t End:   `date +"%d/%m/%Y %H:%M:%S"` \n\n"
+
+		./extrai.sh /tmp/zsim.out $APP >> $OUTPUT
+
+		sed -i '1d' $DOE
+		find $DOE -size 0 -delete
+	done < $DOE
+
+done
+
+date +"%d/%m/%Y %H:%M:%S"
+printf "\t done\n\n"
