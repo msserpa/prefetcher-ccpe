@@ -15,3 +15,4 @@ The contents of this companion.
 |---------------+-------------------------------------------------------------------------------------------|
 | build         | Makefile and run commands used for experiments.                                           |
 | data          | Execution times colected.                                                                 |
+| scripts       | R and python scripts.                                                                     |
