@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+#SBATCH --time=24:00:00
+#SBATCH --partition=cei
+#SBATCH --nodelist=cei3
+#SBATCH --exclusive
+#SBATCH --job-name=ccpe-girelli-nas
+
+source /home/intel/vtune_profiler/amplxe-vars.sh intel64
+
+NAS_BIN=$HOME/NPB/NPB3.3.1/NPB3.3-OMP/bin
+BIN=/tmp
+
+cp $NAS_BIN/* $BIN
+
+HOST=`hostname | awk -F. {'print $1'}`
+ARCH=`gcc -march=native -Q --help=target | grep march | awk '{print $2}'`
+
+MY_PWD=`pwd`
+
+date +"%d/%m/%Y %H:%M:%S"
+printf "\t Running on $ARCH@$HOST \n\n"
+
+while true; do
+	STEP=`ls output/ | grep $HOST | tail -1 | awk -F. {'print $2'}`
+	if [ -z "$STEP" ]; then
+		STEP=0
+	fi
+
+	DOE=./DoE/$HOST.nas.csv
+	if [ -f "$DOE" ]; then
+	    printf "\t Using old $DOE\n\n"
+	else 
+	    ./DoE.sh nas
+	    STEP=$((STEP+1))
+	fi
+
+	OUTPUT=./output/$HOST.$STEP.nas.csv
+
+	unset -v KMP_AFFINITY
+	unset -v GOMP_CPU_AFFINITY
+	unset -v OMP_NUM_THREADS
+	unset -v OMP_SCHEDULE
+	unset -v PAPI_EVENT
+	unset -v LD_PRELOAD
+
+	date +"%d/%m/%Y %H:%M:%S"
+	printf "\t Warm-up\n\n"
+	stress-ng --cpu 100 -t 5 &> /tmp/time.stress
+	sleep 1
+	sed 's/^/\t/' /tmp/time.stress
+	printf "\n"
+
+	date +"%d/%m/%Y %H:%M:%S"
+	printf "\t Step: $STEP \n\n"
+
+	while IFS=\; read -r APP THREADS; do	
+		date +"%d/%m/%Y %H:%M:%S"
+		printf "\t Application: $APP \n"
+		printf "\t Threads: $THREADS \n"
+
+		export OMP_NUM_THREADS=$THREADS
+		export GOMP_CPU_AFFINITY="0-$((2*$THREADS)):2"
+		EXEC=$BIN/$APP.A.x
+
+		printf "\t Start: `date +"%d/%m/%Y %H:%M:%S"` \n"
+		cd /tmp
+		vtune -collect memory-access numactl --membind=0 --cpunodebind=0 $EXEC 1> /tmp/exec 2> /tmp/vtune
+		cd $MY_PWD
+		printf "\t End:   `date +"%d/%m/%Y %H:%M:%S"` \n\n"
+
+		MEM_BOUND=`cat /tmp/exec | grep "Memory Bound:" | awk {'print $3'} | sed 's/\%//g'`
+		L1_BOUND=`cat /tmp/exec | grep "L1 Bound:" | awk {'print $3'} | sed 's/\%//g'`
+		L2_BOUND=`cat /tmp/exec | grep "L2 Bound:" | awk {'print $3'} | sed 's/\%//g'`
+		L3_BOUND=`cat /tmp/exec | grep "L3 Bound:" | awk {'print $3'} | sed 's/\%//g'`
+		DRAM_BOUND=`cat /tmp/exec | grep "DRAM Bound:" | awk {'print $3'} | sed 's/\%//g'`
+		DRAM_BAND_BOUND=`cat /tmp/exec | grep "DRAM Bandwidth Bound:" | awk {'print $4'} | sed 's/\%//g'`
+		STORE_BOUND=`cat /tmp/exec | grep "Store Bound:" | awk {'print $3'} | sed 's/\%//g'`
+		NUMA=`cat /tmp/exec | grep "NUMA:" | awk {'print $6'} | sed 's/\%//g'`
+		UPI_BOUND=`cat /tmp/exec | grep "UPI Utilization Bound:" | awk {'print $4'} | sed 's/\%//g'`
+		LOADS=`cat /tmp/exec | grep "Loads:" | awk {'print $2'} | sed 's/\,//g'`
+		STORES=`cat /tmp/exec | grep "Stores:" | awk {'print $2'} | sed 's/\,//g'`
+		LLC_MISS=`cat /tmp/exec | grep "Stores:" | awk {'print $2'} | sed 's/\,//g'`
+		LOCAL_DRAM=`cat /tmp/exec | grep "Local DRAM Access Count:" | awk {'print $5'} | sed 's/\,//g'`
+		REMOTE_DRAM=`cat /tmp/exec | grep "Remote DRAM Access Count:" | awk {'print $5'} | sed 's/\,//g'`
+		REMOTE_CACHE=`cat /tmp/exec | grep "Remote Cache Access Count:" | awk {'print $5'} | sed 's/\,//g'`
+		LATENCY=`cat /tmp/exec | grep "Average Latency (cycles):" | awk {'print $4'} | sed 's/\,//g'`
+		
+		prefetch='native-l1-l2'
+		echo $prefetch,$APP,$THREADS,memory-bound,$MEM_BOUND >> $OUTPUT
+		echo $prefetch,$APP,$THREADS,l1-bound,$L1_BOUND >> $OUTPUT
+		echo $prefetch,$APP,$THREADS,l2-bound,$L2_BOUND >> $OUTPUT
+		echo $prefetch,$APP,$THREADS,l2-bound,$L3_BOUND >> $OUTPUT
+		echo $prefetch,$APP,$THREADS,dram-bound,$DRAM_BOUND >> $OUTPUT
+		echo $prefetch,$APP,$THREADS,dram-bandwidth-bound,$DRAM_BAND_BOUND >> $OUTPUT
+		echo $prefetch,$APP,$THREADS,store-bound,$STORE_BOUND >> $OUTPUT
+		echo $prefetch,$APP,$THREADS,numa,$NUMA >> $OUTPUT
+		echo $prefetch,$APP,$THREADS,upi-bound,$UPI_BOUND >> $OUTPUT
+		echo $prefetch,$APP,$THREADS,loads,$LOADS >> $OUTPUT
+		echo $prefetch,$APP,$THREADS,stores,$STORES >> $OUTPUT
+		echo $prefetch,$APP,$THREADS,llc-miss,$LLC_MISS >> $OUTPUT
+		echo $prefetch,$APP,$THREADS,local-dram,$LOCAL_DRAM >> $OUTPUT
+		echo $prefetch,$APP,$THREADS,remote-dram,$REMOTE_DRAM >> $OUTPUT
+		echo $prefetch,$APP,$THREADS,remote-cache,$REMOTE_CACHE >> $OUTPUT
+		echo $prefetch,$APP,$THREADS,latency,$LATENCY >> $OUTPUT
+
+		sed -i '1d' $DOE
+		find $DOE -size 0 -delete
+	done < $DOE
+
+done
+
+date +"%d/%m/%Y %H:%M:%S"
+printf "\t done\n\n"
