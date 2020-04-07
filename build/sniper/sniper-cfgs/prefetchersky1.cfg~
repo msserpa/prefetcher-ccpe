@@ -1,0 +1,14 @@
+[perf_model/l2_cache]
+#prefetcher = simple
+prefetcher = ghb
+
+[perf_model/l2_cache/prefetcher/ghb] # não é stream mas é o melhor que dá pra botar pra L2 (botar isso no coiso)
+width = 2 #fbm: talvez 4 em um desses campos? vou ver o código
+depth = 2
+ghb_size = 512
+ghb_table_size = 512
+# é o que a casa oferece
+
+[perf_model/l2_cache/prefetcher]
+prefetch_on_prefetch_hit = true # Do prefetches only on miss (false), or also on hits to lines brought in by the prefetcher (true)
+
