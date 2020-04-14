@@ -31,5 +31,18 @@ for th in `seq 1 $threads`; do
   echo $version,$app,$(($th-1)),$threads,l2_rqsts-pf-miss,$P_MISSES
   echo $version,$app,$(($th-1)),$threads,l2-lines-out-useless-pref,$P_EVICT
 
+
+  PREFETCHES_L1=`cat $1 | grep "L1-D.prefetches =" | tr -d ' ' |  awk -F= {'print $2'} | cut -d , -f $th`
+  P_HITS_L1=`cat $1 | grep "L1-D.hits-prefetch =" | tr -d ' ' |  awk -F= {'print $2'} | cut -d , -f $th`
+  P_MISSES_L1=$(echo "${PREFETCHES_L1} - ${P_HITS_L1}" | bc )
+  P_EVICT_L1=`cat $1 | grep "L1-D.evict-prefetch =" | tr -d ' ' |  awk -F= {'print $2'} | cut -d , -f $th`
+
+  echo $version,$app,$(($th-1)),$threads,l1_rqsts-all-pf,$PREFETCHES_L1
+  echo $version,$app,$(($th-1)),$threads,l1_rqsts-pf-hit,$P_HITS_L1
+  echo $version,$app,$(($th-1)),$threads,l1_rqsts-pf-miss,$P_MISSES_L1
+  echo $version,$app,$(($th-1)),$threads,l1-lines-out-useless-pref,$P_EVICT_L1
+
+  
+
   cp $1 $1.bkp
 done
