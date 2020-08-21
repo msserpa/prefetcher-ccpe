@@ -17,7 +17,7 @@ date +"%d/%m/%Y %H:%M:%S"
 printf "\t Running on $ARCH@$HOST \n\n"
 
 while true; do
-  STEP=`ls output/ | grep $HOST | tail -1 | awk -F. {'print $2'}`
+  STEP=`ls output_passive/ | grep $HOST | tail -1 | awk -F. {'print $2'}`
   if [ -z "$STEP" ]; then
     STEP=0
   fi
@@ -30,7 +30,7 @@ while true; do
     STEP=$((STEP+1))
   fi
 
-  OUTPUT=./output/$HOST.$STEP.nas.csv
+  OUTPUT=./output_passive/$HOST.$STEP.nas.csv
 
   unset -v KMP_AFFINITY
   unset -v GOMP_CPU_AFFINITY
@@ -38,7 +38,6 @@ while true; do
   unset -v OMP_SCHEDULE
   unset -v PAPI_EVENT
   unset -v LD_PRELOAD
-#******************************* IS THE OMP_WAIT_POLICY IMPORTANT? *********************************************
   unset -v OMP_WAIT_POLICY
 
   date +"%d/%m/%Y %H:%M:%S"
@@ -60,6 +59,7 @@ while true; do
 
 
     export OMP_NUM_THREADS=$THREADS
+    export OMP_WAIT_POLICY=PASSIVE 
     export GOMP_CPU_AFFINITY="0-$((2*$THREADS)):2"
     EXEC=$BIN/$APP.$SIZE.x
 
