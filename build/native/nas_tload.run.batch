@@ -12,15 +12,6 @@ cp $NAS_BIN/* $BIN
 HOST=`hostname | awk -F. {'print $1'}`
 ARCH=`gcc -march=native -Q --help=target | grep march | awk '{print $2}'`
 
-
-if [ "$HOST" == "cei1" ]; then
-  PREF="none"
-elif [ "$HOST" == "cei2" ]; then
-  PREF="L1"
-else
-  PREF="unknown"
-fi
-
 date +"%d/%m/%Y %H:%M:%S"
 printf "\t Running on $ARCH@$HOST \n\n"
 
@@ -54,12 +45,12 @@ while true; do
   fi
 
   OUTPUT=./tload_output/$HOST.$STEP.nas.csv
+  echo version,app,size,cpu,threads,metric,value >> $OUTPUT 
 
   date +"%d/%m/%Y %H:%M:%S"
   printf "\t Step: $STEP \n\n"
 
-  while IFS=\; read -r APP THREADS METRIC SIZE; do
-
+  while IFS=\; read -r APP THREADS METRIC SIZE PREF; do
 
     date +"%d/%m/%Y %H:%M:%S"
     printf "\t Warm-up\n\n"
@@ -72,10 +63,31 @@ while true; do
     printf "\t Application: $APP.$SIZE  \n"
     printf "\t Threads: $THREADS \n"
     printf "\t Event: $METRIC \n"
-
+    printf "\t Prefetchers: $PREF \n"
 
     export OMP_NUM_THREADS=$THREADS
     export PAPI_COUNTER_LIST=$METRIC
+
+    # PREFETCHERS CONFIGURATION:
+    # --prefetch 0  -> enables all prefetchers (L1-L2)
+    # --prefetch 3  -> enables all L1 prefetchers
+    # --prefetch 12 -> enables all L2 prefetchers
+    # --prefetch 15 -> disables all prefetchers
+    if [[ "$PREF" == "L1-L2" ]]; then
+      $SCRATCH/utils --prefetch 0      
+    else 
+      if [[ "$PREF" == "L1" ]]; then
+        $SCRATCH/utils --prefetch 3
+      else
+        if [[ "$PREF" == "L2" ]]; then
+          $SCRATCH/utils --prefetch 12
+        else
+          if [[ "$PREF" == "none" ]]; then
+            $SCRATCH/utils --prefetch 15
+          fi
+        fi
+      fi
+    fi
     $SCRATCH/utils --turbo-off &>> /tmp/turbo
 
     EXEC=$BIN/$APP.$SIZE.x
@@ -85,6 +97,8 @@ while true; do
     printf "\t End:   `date +"%d/%m/%Y %H:%M:%S"` \n\n"
 
     $SCRATCH/utils --turbo-on &>> /tmp/turbo
+    # Reactivate all prefetchers after the execution is done
+    $SCRATCH/utils --prefetch 0      
 
     grep "statistic of thread" /tmp/exec | grep $METRIC | awk '{print $NF}' > /tmp/papi
   
